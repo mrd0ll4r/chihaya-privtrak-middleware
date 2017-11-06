@@ -21,7 +21,7 @@ type Config struct {
 	ShardCount                  uint          `yaml:"shard_count"`
 	GCInterval                  time.Duration `yaml:"gc_interval"`
 	PrometheusReportingInterval time.Duration `yaml:"prometheus_reporting_interval"`
-	PeerLifetime                time.Duration `json:"peer_lifetime"`
+	PeerLifetime                time.Duration `yaml:"peer_lifetime"`
 }
 
 // LogFields renders the current config as a set of Logrus fields.
