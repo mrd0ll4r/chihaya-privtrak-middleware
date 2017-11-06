@@ -27,16 +27,16 @@ var (
 	// PromGCDurationMilliseconds is a histogram used by storage to record the
 	// durations of execution time required for removing expired peers.
 	PromGCDurationMilliseconds = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "chihaya_storage_gc_duration_milliseconds",
-		Help:    "The time it takes to perform storage garbage collection",
+		Name:    "chihaya_privtrak_gc_duration_milliseconds",
+		Help:    "The time it takes to perform privtrak garbage collection",
 		Buckets: prometheus.ExponentialBuckets(9.375, 2, 10),
 	})
 
 	// PromUsersCount is a gauge used to hold the current total amount of
 	// unique swarms being tracked by a storage.
 	PromUsersCount = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "chihaya_storage_infohashes_count",
-		Help: "The number of Infohashes tracked",
+		Name: "chihaya_privtrak_users_count",
+		Help: "The number of users tracked",
 	})
 )
 
