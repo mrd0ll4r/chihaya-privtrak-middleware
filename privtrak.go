@@ -209,6 +209,7 @@ func (m *ptMiddleware) Stop() <-chan error {
 // New constructs a new instance of the privtrak middleware.
 func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (middleware.Hook, error) {
 	cfg := provided.validate()
+	log.Info("privtrak: creating new hook", cfg)
 
 	mw := ptMiddleware{
 		cfg:            cfg,
