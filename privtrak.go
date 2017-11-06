@@ -68,6 +68,18 @@ type StatDelta struct {
 	Reported  time.Time
 }
 
+// LogFields implements log.Fielder for StatDeltas.
+func (s StatDelta) LogFields() log.Fields {
+	return log.Fields{
+		"user":      s.User,
+		"infoHash":  s.InfoHash,
+		"deltaUp":   s.DeltaUp,
+		"deltaDown": s.DeltaDown,
+		"event":     s.Event,
+		"reported":  s.Reported,
+	}
+}
+
 // A DeltaHandler handles batches of stat-deltas.
 type DeltaHandler interface {
 	// HandleDeltas handles a batch of deltas.
@@ -329,6 +341,7 @@ func (m *ptMiddleware) HandleAnnounce(ctx context.Context, req *bittorrent.Annou
 	delta := stats.update(req)
 	if delta != nil {
 		copy(delta.User[:], id[:])
+		log.Debug("privtrak: generated announce delta", delta)
 		shard.deltas = append(shard.deltas, *delta)
 	}
 
