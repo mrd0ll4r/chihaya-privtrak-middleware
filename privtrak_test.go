@@ -116,6 +116,58 @@ var testData = []testDatum{
 			{
 				req: bittorrent.AnnounceRequest{
 					InfoHash:   ih1,
+					Uploaded:   1200,
+					Downloaded: 100,
+					Peer: bittorrent.Peer{
+						ID: pID1,
+					},
+				},
+			},
+			{
+				req: bittorrent.AnnounceRequest{
+					InfoHash:   ih1,
+					Uploaded:   1500,
+					Downloaded: 200,
+					Event:      bittorrent.Stopped,
+					Peer: bittorrent.Peer{
+						ID: pID1,
+					},
+				},
+			},
+		},
+		expected: []StatDelta{
+			{
+				User:      id1,
+				InfoHash:  ih1,
+				DeltaUp:   200,
+				DeltaDown: 100,
+				Event:     bittorrent.None,
+			},
+			{
+				User:      id1,
+				InfoHash:  ih1,
+				DeltaUp:   300,
+				DeltaDown: 100,
+				Event:     bittorrent.Stopped,
+			},
+		},
+	},
+	{
+		input: []announce{
+			{
+				req: bittorrent.AnnounceRequest{
+					InfoHash:   ih1,
+					Uploaded:   1000,
+					Downloaded: 0,
+					Event:      bittorrent.Started,
+					Peer: bittorrent.Peer{
+						ID: pID1,
+					},
+				},
+			},
+			{
+				req: bittorrent.AnnounceRequest{
+					InfoHash:   ih1,
 					Uploaded:   900,
 					Downloaded: 900,
 					Peer: bittorrent.Peer{
