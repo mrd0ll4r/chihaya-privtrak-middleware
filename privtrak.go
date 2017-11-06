@@ -120,30 +120,38 @@ type userStats struct {
 func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 	// check if we have stats for the swarm
 	i := sort.Search(len(u.swarmStats), statsSearchFunc(req.InfoHash, u.swarmStats))
-	log.Debug("privtrak: calculating update", log.Fields{"req": req, "i": i})
+	log.Debug("privtrak: calculating update", log.Fields{"i": i}, req)
 
 	if i < len(u.swarmStats) && bytes.Equal(u.swarmStats[i].infoHash[:], req.InfoHash[:]) {
 		// if yes: generate delta, update. if event==stopped, delete
-		log.Debug("privtrak: found", log.Fields{"req": req, "i": i})
-		delta := StatDelta{}
-		copy(delta.InfoHash[:], req.InfoHash[:])
-		delta.DeltaUp = int64(req.Uploaded) - int64(u.swarmStats[i].uploaded)
-		delta.DeltaDown = int64(req.Downloaded) - int64(u.swarmStats[i].downloaded)
-		delta.Event = req.Event
-		delta.Reported = timecache.Now()
+		log.Debug("privtrak: found", log.Fields{"i": i}, req)
+		var delta *StatDelta
+		deltaUp := int64(req.Uploaded) - int64(u.swarmStats[i].uploaded)
+		deltaDown := int64(req.Downloaded) - int64(u.swarmStats[i].downloaded)
+		if deltaUp != 0 || deltaDown != 0 {
+			// Only emit a delta if there was a delta...
+			delta = &StatDelta{
+				DeltaUp:   deltaUp,
+				DeltaDown: deltaDown,
+				Event:     req.Event,
+				Reported:  timecache.Now(),
+			}
+			copy(delta.InfoHash[:], req.InfoHash[:])
+		}
 
 		if req.Event == bittorrent.Stopped {
+			// The peer left the swarm - delete our records.
 			u.swarmStats = append(u.swarmStats[:i], u.swarmStats[i+1:]...)
 		} else {
 			u.swarmStats[i].downloaded = req.Downloaded
 			u.swarmStats[i].uploaded = req.Uploaded
 			u.swarmStats[i].lastUpdate = timecache.NowUnix()
 		}
-		return &delta
+		return delta
 	}
 
 	// if no: insert
-	log.Debug("privtrak: not found", log.Fields{"req": req, "i": i})
+	log.Debug("privtrak: not found", log.Fields{"i": i}, req)
 	u.swarmStats = append(u.swarmStats, userSwarmStats{})
 	copy(u.swarmStats[i+1:], u.swarmStats[i:])
 	u.swarmStats[i] = userSwarmStats{
