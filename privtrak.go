@@ -60,12 +60,13 @@ type UserIdentifier interface {
 // It contains the infohash, the event the client provided with the announce and
 // a timestamp.
 type StatDelta struct {
-	User      ID
-	InfoHash  bittorrent.InfoHash
-	DeltaUp   int64
-	DeltaDown int64
-	Event     bittorrent.Event
-	Reported  time.Time
+	User          ID
+	InfoHash      bittorrent.InfoHash
+	DeltaUp       int64
+	DeltaDown     int64
+	Event         bittorrent.Event
+	Reported      time.Time
+	DeltaSeedTime int64
 }
 
 // LogFields implements log.Fielder for StatDeltas.
@@ -140,16 +141,20 @@ func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 		var delta *StatDelta
 		deltaUp := int64(req.Uploaded) - int64(u.swarmStats[i].uploaded)
 		deltaDown := int64(req.Downloaded) - int64(u.swarmStats[i].downloaded)
-		if deltaUp != 0 || deltaDown != 0 {
-			// Only emit a delta if there was a delta...
-			delta = &StatDelta{
-				DeltaUp:   deltaUp,
-				DeltaDown: deltaDown,
-				Event:     req.Event,
-				Reported:  timecache.Now(),
-			}
-			copy(delta.InfoHash[:], req.InfoHash[:])
+
+		var seedDuration int64
+		if req.Event == bittorrent.None && req.Left == 0 {
+			seedDuration = timecache.NowUnix() - u.swarmStats[i].lastUpdate
 		}
+
+		delta = &StatDelta{
+			DeltaUp:      deltaUp,
+			DeltaDown:    deltaDown,
+			Event:        req.Event,
+			Reported:     timecache.Now(),
+			SeedDuration: seedDuration,
+		}
+		copy(delta.InfoHash[:], req.InfoHash[:])
 
 		if req.Event == bittorrent.Stopped {
 			// The peer left the swarm - delete our records.
