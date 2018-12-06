@@ -60,13 +60,13 @@ type UserIdentifier interface {
 // It contains the infohash, the event the client provided with the announce and
 // a timestamp.
 type StatDelta struct {
-	User          ID
-	InfoHash      bittorrent.InfoHash
-	DeltaUp       int64
-	DeltaDown     int64
-	Event         bittorrent.Event
-	Reported      time.Time
-	DeltaSeedTime int64
+	User         ID
+	InfoHash     bittorrent.InfoHash
+	DeltaUp      int64
+	DeltaDown    int64
+	Event        bittorrent.Event
+	Reported     time.Time
+	SeedDuration int64
 }
 
 // LogFields implements log.Fielder for StatDeltas.
