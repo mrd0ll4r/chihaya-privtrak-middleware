@@ -311,6 +311,25 @@ func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (midd
 		}
 	}()
 
+	// Start a goroutine for reporting statistics to Prometheus.
+	mw.wg.Add(1)
+	go func() {
+		defer mw.wg.Done()
+		t := time.NewTicker(cfg.SeedtimeFlushInterval)
+		for {
+			select {
+			case <-mw.closing:
+				t.Stop()
+				return
+			case <-t.C:
+				before := time.Now()
+				deltas := mw.flushAllSeedTimes()
+				mw.deltaHandler.HandleDeltas(deltas)
+				log.Debug("privtrak: populateProm() finished", log.Fields{"timeTaken": time.Since(before)})
+			}
+		}
+	}()
+
 	return &mw, nil
 }
 

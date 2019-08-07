@@ -13,6 +13,7 @@ const (
 	defaultGarbageCollectionInterval   = time.Minute * 3
 	defaultPeerLifetime                = time.Minute * 30
 	defaultBatchSize                   = 1024
+	defaultSeedtimeFlushInterval       = time.Hour * 1
 )
 
 // A Config holds the configuration for the privtrak middleware.
@@ -22,16 +23,18 @@ type Config struct {
 	GCInterval                  time.Duration `yaml:"gc_interval"`
 	PrometheusReportingInterval time.Duration `yaml:"prometheus_reporting_interval"`
 	PeerLifetime                time.Duration `yaml:"peer_lifetime"`
+	SeedtimeFlushInterval       time.Duration `yaml:"seedtime_flush_interval"`
 }
 
 // LogFields renders the current config as a set of Logrus fields.
 func (cfg Config) LogFields() log.Fields {
 	return log.Fields{
-		"gcInterval":         cfg.GCInterval,
-		"promReportInterval": cfg.PrometheusReportingInterval,
-		"peerLifetime":       cfg.PeerLifetime,
-		"shardCount":         cfg.ShardCount,
-		"batchSize":          cfg.BatchSize,
+		"gcInterval":            cfg.GCInterval,
+		"promReportInterval":    cfg.PrometheusReportingInterval,
+		"peerLifetime":          cfg.PeerLifetime,
+		"shardCount":            cfg.ShardCount,
+		"batchSize":             cfg.BatchSize,
+		"seedtimeFlushInterval": cfg.SeedtimeFlushInterval,
 	}
 }
 
@@ -80,6 +83,15 @@ func (cfg Config) validate() Config {
 			"name":     "BatchSize",
 			"provided": cfg.BatchSize,
 			"default":  validcfg.BatchSize,
+		})
+	}
+
+	if cfg.SeedtimeFlushInterval <= 0 {
+		validcfg.SeedtimeFlushInterval = defaultSeedtimeFlushInterval
+		log.Warn("falling back to default configuration", log.Fields{
+			"name":     "SeedtimeFlushInterval",
+			"provided": cfg.SeedtimeFlushInterval,
+			"default":  validcfg.SeedtimeFlushInterval,
 		})
 	}
 
