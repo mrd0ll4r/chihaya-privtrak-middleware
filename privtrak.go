@@ -311,7 +311,7 @@ func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (midd
 		}
 	}()
 
-	// Start a goroutine for reporting statistics to Prometheus.
+	// Start a goroutine for flushing seedtimes
 	mw.wg.Add(1)
 	go func() {
 		defer mw.wg.Done()
@@ -323,8 +323,7 @@ func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (midd
 				return
 			case <-t.C:
 				before := time.Now()
-				deltas := mw.flushAllSeedTimes()
-				mw.deltaHandler.HandleDeltas(deltas)
+				mw.flushAllSeedTimes()
 				log.Debug("privtrak: populateProm() finished", log.Fields{"timeTaken": time.Since(before)})
 			}
 		}
@@ -351,7 +350,7 @@ func (m *ptMiddleware) collectGarbage() {
 	}
 }
 
-func (u userStats) flushSeedTimes(id ID) []StatDelta {
+func (u *userStats) flushSeedTimes(id ID) []StatDelta {
 	userDeltas := make([]StatDelta, len(u.swarmStats))
 
 	for i, stats := range u.swarmStats {
@@ -367,19 +366,23 @@ func (u userStats) flushSeedTimes(id ID) []StatDelta {
 	return userDeltas
 }
 
-func (m *ptMiddleware) flushAllSeedTimes() []StatDelta {
-	deltas := make([]StatDelta, 0)
+func (m *ptMiddleware) flushAllSeedTimes() {
 
 	for _, shard := range m.shards {
 		shard.Lock()
 		for id, stats := range shard.users {
+
 			partialDeltas := stats.flushSeedTimes(id)
-			deltas = append(deltas, partialDeltas...)
+			shard.deltas = append(shard.deltas, partialDeltas...)
+
+			if len(stats.swarmStats) == 0 {
+				delete(shard.users, id)
+			} else {
+				shard.users[id] = stats
+			}
 		}
 		shard.Unlock()
 	}
-	return deltas
-
 }
 
 func (m *ptMiddleware) populateProm() {
