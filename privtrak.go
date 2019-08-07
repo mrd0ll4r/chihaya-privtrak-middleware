@@ -193,7 +193,7 @@ func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 	return nil
 }
 
-func (u *userStats) removeExpired(peerLifetime time.Duration) ([]StatDelta) {
+func (u *userStats) removeExpired(peerLifetime time.Duration, id ID) []StatDelta {
 	cutoffTime := timecache.Now().Add(peerLifetime * -1)
 	cutoff := cutoffTime.Unix()
 
@@ -201,10 +201,11 @@ func (u *userStats) removeExpired(peerLifetime time.Duration) ([]StatDelta) {
 	for i := range u.swarmStats {
 		if u.swarmStats[i].lastUpdate < cutoff {
 			if u.swarmStats[i].seedingTime != 0 {
-				delta = &StatDelta{
-					Event:       req.Event,
+				delta := StatDelta{
+					Event:       bittorrent.None,
 					Reported:    timecache.Now(),
 					SeedingTime: u.swarmStats[i].seedingTime,
+					User: id,
 				}
 				deltas = append(deltas, delta)
 			}
@@ -318,7 +319,7 @@ func (m *ptMiddleware) collectGarbage() {
 		shard.Lock()
 		for id, stats := range shard.users {
 
-			expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime)
+			expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id)
 			shard.deltas = append(shard.deltas, expiredDeltas...)
 
 			if len(stats.swarmStats) == 0 {
@@ -331,19 +332,34 @@ func (m *ptMiddleware) collectGarbage() {
 	}
 }
 
-func (u userStats) flushSeedTimes() {
-	deltas := make([]*StatDelta, len(u.swarmStats))
+func (u userStats) flushSeedTimes(id ID) []StatDelta {
+	userDeltas := make([]StatDelta, len(u.swarmStats))
 
 	for i, stats := range u.swarmStats {
-		delta := &StatDelta{
+		delta := StatDelta{
 			InfoHash:    stats.infoHash,
 			Reported:    timecache.Now(),
 			SeedingTime: stats.seedingTime,
-			User:
+			User: id,
 		}
 		u.swarmStats[i].seedingTime = 0
-		deltas = append(deltas, delta)
+		userDeltas = append(userDeltas, delta)
 	}
+	return userDeltas
+}
+
+func (m *ptMiddleware) flushAllSeedTimes() []StatDelta {
+	deltas := make([]StatDelta, 0)
+
+	for _, shard := range m.shards {
+		shard.Lock()
+		for id, stats := range shard.users {
+			partialDeltas := stats.flushSeedTimes(id)
+			deltas = append(deltas, partialDeltas...)
+		}
+		shard.Unlock()
+	}
+	return deltas
 
 }
 
@@ -393,7 +409,7 @@ func (m *ptMiddleware) HandleAnnounce(ctx context.Context, req *bittorrent.Annou
 		shard.deltas = append(shard.deltas, *delta)
 	}
 
-	expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime)
+	expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id) //TODO: double check passing this ID
 	shard.deltas = append(shard.deltas, expiredDeltas...)
 
 	if len(stats.swarmStats) == 0 {
