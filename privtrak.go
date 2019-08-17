@@ -57,15 +57,16 @@ type UserIdentifier interface {
 }
 
 // A StatDelta is a delta for a user's stats.
-// It contains the infohash, the event the client provided with the announce and
-// a timestamp.
+// It contains the infohash, the event the client provided with the announce,
+// the seeding duration and the reported event time.
 type StatDelta struct {
-	User      ID
-	InfoHash  bittorrent.InfoHash
-	DeltaUp   int64
-	DeltaDown int64
-	Event     bittorrent.Event
-	Reported  time.Time
+	User        ID
+	InfoHash    bittorrent.InfoHash
+	DeltaUp     int64
+	DeltaDown   int64
+	Event       bittorrent.Event
+	Reported    time.Time
+	SeedingTime int64
 }
 
 // LogFields implements log.Fielder for StatDeltas.
@@ -99,7 +100,8 @@ type userSwarmStats struct {
 	downloaded uint64
 	// lastUpdate stores the unix seconds timestamp of the last received update
 	// for this peer/infohash combination
-	lastUpdate int64
+	lastUpdate  int64
+	seedingTime int64
 }
 
 // userSwarmStatsCollection is a slice of userSwarmStats.
@@ -143,18 +145,34 @@ func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 		if deltaUp != 0 || deltaDown != 0 {
 			// Only emit a delta if there was a delta...
 			delta = &StatDelta{
-				DeltaUp:   deltaUp,
-				DeltaDown: deltaDown,
-				Event:     req.Event,
-				Reported:  timecache.Now(),
+				DeltaUp:     deltaUp,
+				DeltaDown:   deltaDown,
+				Event:       req.Event,
+				Reported:    timecache.Now(),
+				SeedingTime: u.swarmStats[i].seedingTime,
 			}
 			copy(delta.InfoHash[:], req.InfoHash[:])
+			u.swarmStats[i].seedingTime = 0
 		}
 
 		if req.Event == bittorrent.Stopped {
 			// The peer left the swarm - delete our records.
+			if u.swarmStats[i].seedingTime != 0 {
+				delta = &StatDelta{
+					Event:       req.Event,
+					Reported:    timecache.Now(),
+					SeedingTime: u.swarmStats[i].seedingTime,
+				}
+				copy(delta.InfoHash[:], req.InfoHash[:])
+				u.swarmStats[i].seedingTime = 0
+			}
 			u.swarmStats = append(u.swarmStats[:i], u.swarmStats[i+1:]...)
+
 		} else {
+			if req.Left == 0 {
+				//only count seeding time for completed torrents
+				u.swarmStats[i].seedingTime += timecache.NowUnix() - u.swarmStats[i].lastUpdate
+			}
 			u.swarmStats[i].downloaded = req.Downloaded
 			u.swarmStats[i].uploaded = req.Uploaded
 			u.swarmStats[i].lastUpdate = timecache.NowUnix()
@@ -176,16 +194,30 @@ func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 	return nil
 }
 
-func (u *userStats) removeExpired(peerLifetime time.Duration) {
+func (u *userStats) removeExpired(peerLifetime time.Duration, id ID) []StatDelta {
 	cutoffTime := timecache.Now().Add(peerLifetime * -1)
 	cutoff := cutoffTime.Unix()
 
+	deltas := make([]StatDelta, 0)
 	for i := range u.swarmStats {
 		if u.swarmStats[i].lastUpdate < cutoff {
+			if u.swarmStats[i].seedingTime != 0 {
+				delta := StatDelta{
+					Event:       bittorrent.None,
+					Reported:    timecache.Now(),
+					SeedingTime: u.swarmStats[i].seedingTime,
+				}
+				copy(delta.User[:], id[:])
+				copy(delta.InfoHash[:], u.swarmStats[i].infoHash[:])
+				deltas = append(deltas, delta)
+			}
+
 			u.swarmStats = append(u.swarmStats[:i], u.swarmStats[i+1:]...)
 			i--
 		}
 	}
+
+	return deltas
 }
 
 type statShard struct {
@@ -211,6 +243,7 @@ func (m *ptMiddleware) Stop() <-chan error {
 		close(m.closing)
 		m.wg.Wait()
 
+		m.flushAllSeedTimes()
 		for i, shard := range m.shards {
 			if len(shard.deltas) > 0 {
 				err := m.deltaHandler.HandleDeltas(shard.deltas)
@@ -281,6 +314,24 @@ func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (midd
 		}
 	}()
 
+	// Start a goroutine for flushing seedtimes
+	mw.wg.Add(1)
+	go func() {
+		defer mw.wg.Done()
+		t := time.NewTicker(cfg.SeedtimeFlushInterval)
+		for {
+			select {
+			case <-mw.closing:
+				t.Stop()
+				return
+			case <-t.C:
+				before := time.Now()
+				mw.flushAllSeedTimes()
+				log.Debug("privtrak: flushAllSeedTimes() finished", log.Fields{"timeTaken": time.Since(before)})
+			}
+		}
+	}()
+
 	return &mw, nil
 }
 
@@ -288,12 +339,45 @@ func (m *ptMiddleware) collectGarbage() {
 	for _, shard := range m.shards {
 		shard.Lock()
 		for id, stats := range shard.users {
-			stats.removeExpired(m.cfg.PeerLifetime)
+			expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id)
+			shard.deltas = append(shard.deltas, expiredDeltas...)
+
 			if len(stats.swarmStats) == 0 {
 				delete(shard.users, id)
 			} else {
 				shard.users[id] = stats
 			}
+		}
+		shard.Unlock()
+	}
+}
+
+func (u *userStats) flushSeedTimes(id ID) []StatDelta {
+	userDeltas := make([]StatDelta, 0)
+
+	for i, stats := range u.swarmStats {
+		if stats.seedingTime > 0 {
+			delta := StatDelta{
+				Reported:    timecache.Now(),
+				SeedingTime: stats.seedingTime,
+				Event: bittorrent.None,
+			}
+			copy(delta.InfoHash[:], stats.infoHash[:])
+			copy(delta.User[:], id[:])
+			u.swarmStats[i].seedingTime = 0
+
+			userDeltas = append(userDeltas, delta)
+		}
+	}
+	return userDeltas
+}
+
+func (m *ptMiddleware) flushAllSeedTimes() {
+	for _, shard := range m.shards {
+		shard.Lock()
+		for id, stats := range shard.users {
+			partialDeltas := stats.flushSeedTimes(id)
+			shard.deltas = append(shard.deltas, partialDeltas...)
 		}
 		shard.Unlock()
 	}
@@ -345,7 +429,9 @@ func (m *ptMiddleware) HandleAnnounce(ctx context.Context, req *bittorrent.Annou
 		shard.deltas = append(shard.deltas, *delta)
 	}
 
-	stats.removeExpired(m.cfg.PeerLifetime)
+	expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id)
+	shard.deltas = append(shard.deltas, expiredDeltas...)
+
 	if len(stats.swarmStats) == 0 {
 		delete(shard.users, id)
 	} else {
