@@ -20,7 +20,9 @@ func init() {
 	// Register the metrics.
 	prometheus.MustRegister(
 		PromGCDurationMilliseconds,
-		PromUsersCount)
+		PromUsersCount,
+		PromUpBytesTotal,
+		PromDownBytesTotal)
 }
 
 var (
@@ -37,6 +39,16 @@ var (
 	PromUsersCount = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "chihaya_privtrak_users_count",
 		Help: "The number of users tracked",
+	})
+
+	PromUpBytesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "chihaya_privtrak_traffic_up_bytes_total",
+		Help: "Total traffic transferred up, in bytes",
+	})
+
+	PromDownBytesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "chihaya_privtrak_traffic_down_bytes_total",
+		Help: "Total traffic transferred down, in bytes",
 	})
 )
 
