@@ -57,8 +57,8 @@ type UserIdentifier interface {
 }
 
 // A StatDelta is a delta for a user's stats.
-// It contains the infohash, the event the client provided with the announce and
-// a timestamp.
+// It contains the infohash, the event the client provided with the announce,
+// the seeding duration and the reported event time.
 type StatDelta struct {
 	User        ID
 	InfoHash    bittorrent.InfoHash
@@ -163,6 +163,7 @@ func (u *userStats) update(req *bittorrent.AnnounceRequest) *StatDelta {
 					Reported:    timecache.Now(),
 					SeedingTime: u.swarmStats[i].seedingTime,
 				}
+				copy(delta.InfoHash[:], req.InfoHash[:])
 				u.swarmStats[i].seedingTime = 0
 			}
 			u.swarmStats = append(u.swarmStats[:i], u.swarmStats[i+1:]...)
@@ -205,8 +206,9 @@ func (u *userStats) removeExpired(peerLifetime time.Duration, id ID) []StatDelta
 					Event:       bittorrent.None,
 					Reported:    timecache.Now(),
 					SeedingTime: u.swarmStats[i].seedingTime,
-					User: id,
 				}
+				copy(delta.User[:], id[:])
+				copy(delta.InfoHash[:], u.swarmStats[i].infoHash[:])
 				deltas = append(deltas, delta)
 			}
 
@@ -241,6 +243,7 @@ func (m *ptMiddleware) Stop() <-chan error {
 		close(m.closing)
 		m.wg.Wait()
 
+		m.flushAllSeedTimes()
 		for i, shard := range m.shards {
 			if len(shard.deltas) > 0 {
 				err := m.deltaHandler.HandleDeltas(shard.deltas)
@@ -324,7 +327,7 @@ func New(provided Config, identifier UserIdentifier, handler DeltaHandler) (midd
 			case <-t.C:
 				before := time.Now()
 				mw.flushAllSeedTimes()
-				log.Debug("privtrak: populateProm() finished", log.Fields{"timeTaken": time.Since(before)})
+				log.Debug("privtrak: flushAllSeedTimes() finished", log.Fields{"timeTaken": time.Since(before)})
 			}
 		}
 	}()
@@ -336,7 +339,6 @@ func (m *ptMiddleware) collectGarbage() {
 	for _, shard := range m.shards {
 		shard.Lock()
 		for id, stats := range shard.users {
-
 			expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id)
 			shard.deltas = append(shard.deltas, expiredDeltas...)
 
@@ -351,35 +353,31 @@ func (m *ptMiddleware) collectGarbage() {
 }
 
 func (u *userStats) flushSeedTimes(id ID) []StatDelta {
-	userDeltas := make([]StatDelta, len(u.swarmStats))
+	userDeltas := make([]StatDelta, 0)
 
 	for i, stats := range u.swarmStats {
-		delta := StatDelta{
-			InfoHash:    stats.infoHash,
-			Reported:    timecache.Now(),
-			SeedingTime: stats.seedingTime,
-			User: id,
+		if stats.seedingTime > 0 {
+			delta := StatDelta{
+				Reported:    timecache.Now(),
+				SeedingTime: stats.seedingTime,
+				Event: bittorrent.None,
+			}
+			copy(delta.InfoHash[:], stats.infoHash[:])
+			copy(delta.User[:], id[:])
+			u.swarmStats[i].seedingTime = 0
+
+			userDeltas = append(userDeltas, delta)
 		}
-		u.swarmStats[i].seedingTime = 0
-		userDeltas = append(userDeltas, delta)
 	}
 	return userDeltas
 }
 
 func (m *ptMiddleware) flushAllSeedTimes() {
-
 	for _, shard := range m.shards {
 		shard.Lock()
 		for id, stats := range shard.users {
-
 			partialDeltas := stats.flushSeedTimes(id)
 			shard.deltas = append(shard.deltas, partialDeltas...)
-
-			if len(stats.swarmStats) == 0 {
-				delete(shard.users, id)
-			} else {
-				shard.users[id] = stats
-			}
 		}
 		shard.Unlock()
 	}
@@ -431,7 +429,7 @@ func (m *ptMiddleware) HandleAnnounce(ctx context.Context, req *bittorrent.Annou
 		shard.deltas = append(shard.deltas, *delta)
 	}
 
-	expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id) //TODO: double check passing this ID
+	expiredDeltas := stats.removeExpired(m.cfg.PeerLifetime, id)
 	shard.deltas = append(shard.deltas, expiredDeltas...)
 
 	if len(stats.swarmStats) == 0 {
